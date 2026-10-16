@@ -23,7 +23,10 @@ class UniversalGPT(GPT):
         self.temperature = temperature
         self.screenshot = False
         self.link = False
-        self.max_request_bytes = int(os.getenv("OPENAI_MAX_REQUEST_BYTES", str(45 * 1024 * 1024)))
+        # 默认 28MB：发送给模型的请求体（含 base64 图片）会按此阈值分块。
+        # 取值低于 OpenRouter 等供应商 30MB 的图片内容硬上限，避免整批图片
+        # 塞进一个请求后触发 HTTP 413（Downloaded image content cannot exceed 30MB）。
+        self.max_request_bytes = int(os.getenv("OPENAI_MAX_REQUEST_BYTES", str(28 * 1024 * 1024)))
         self.checkpoint_dir = Path(os.getenv("NOTE_OUTPUT_DIR", "note_results"))
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         # 初始化时缓存重试配置，避免每次请求重复读取环境变量

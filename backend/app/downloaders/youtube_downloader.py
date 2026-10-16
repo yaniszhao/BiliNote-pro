@@ -12,8 +12,9 @@ from app.models.transcriber_model import TranscriptResult
 from app.services.proxy_config_manager import ProxyConfigManager
 from app.utils.path_helper import get_data_dir
 from app.utils.url_parser import extract_video_id
+from app.utils.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def _apply_proxy(ydl_opts: dict) -> dict:

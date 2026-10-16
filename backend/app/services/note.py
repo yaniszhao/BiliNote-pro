@@ -36,6 +36,7 @@ from app.utils.screenshot_marker import extract_screenshot_timestamps
 from app.utils.status_code import StatusCode
 from app.utils.video_helper import generate_screenshot
 from app.utils.video_reader import VideoReader
+from app.utils.logger import get_logger
 
 # ------------------ 环境变量与全局配置 ------------------
 
@@ -54,9 +55,8 @@ IMAGE_OUTPUT_DIR = os.getenv("OUT_DIR", "./static/screenshots")
 # 图片基础 URL（用于生成 Markdown 中的图片链接，需前端静态目录对应）
 IMAGE_BASE_URL = os.getenv("IMAGE_BASE_URL", "/static/screenshots")
 
-# 日志配置
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+# 日志配置：统一走 get_logger，确保 INFO/ERROR 都落到 logs/app.log
+logger = get_logger(__name__)
 
 
 class NoteGenerator:
