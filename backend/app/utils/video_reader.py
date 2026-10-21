@@ -67,7 +67,7 @@ class VideoReader:
         except subprocess.CalledProcessError:
             return None
 
-    def extract_frames(self, max_frames=1000) -> list[str]:
+    def extract_frames(self, max_frames=2000) -> list[str]:
 
         try:
             os.makedirs(self.frame_dir, exist_ok=True)

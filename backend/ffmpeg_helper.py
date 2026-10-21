@@ -6,6 +6,10 @@ from dotenv import load_dotenv
 from app.utils.logger import get_logger
 logger = get_logger(__name__)
 
+# 缓存探测结果：环境未变化时避免重复探测与打印（前端健康检查会周期性调用）
+_ffmpeg_cached_ok: bool | None = None
+_ffmpeg_cached_env: tuple | None = None
+
 
 def _load_dotenv_from_multiple_paths():
     """尝试多个位置加载 .env，适配源码运行和 PyInstaller 打包场景。
@@ -39,9 +43,17 @@ _load_dotenv_from_multiple_paths()
 def check_ffmpeg_exists() -> bool:
     """
     检查 ffmpeg 是否可用。优先使用 FFMPEG_BIN_PATH 环境变量指定的路径。
+
+    结果按（FFMPEG_BIN_PATH、PATH）缓存：环境未变化时直接复用上次结论，
+    不再重复探测，也不再重复打印日志（前端健康检查会周期性调用本函数）。
     """
+    global _ffmpeg_cached_ok, _ffmpeg_cached_env
+
+    current_env = (os.getenv("FFMPEG_BIN_PATH"), os.environ.get("PATH", ""))
+    if _ffmpeg_cached_env is not None and _ffmpeg_cached_env == current_env:
+        return _ffmpeg_cached_ok
+
     ffmpeg_bin_path = os.getenv("FFMPEG_BIN_PATH")
-    logger.info(f"FFMPEG_BIN_PATH: {ffmpeg_bin_path}")
     if ffmpeg_bin_path and os.path.isdir(ffmpeg_bin_path):
         os.environ["PATH"] = ffmpeg_bin_path + os.pathsep + os.environ.get("PATH", "")
         logger.info(f"使用FFMPEG_BIN_PATH: {ffmpeg_bin_path}")
@@ -58,10 +70,14 @@ def check_ffmpeg_exists() -> bool:
     try:
         subprocess.run(["ffmpeg", "-version"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
         logger.info("ffmpeg 已安装")
-        return True
+        ok = True
     except (FileNotFoundError, OSError, subprocess.CalledProcessError):
         logger.info("ffmpeg 未安装")
-        return False
+        ok = False
+
+    _ffmpeg_cached_ok = ok
+    _ffmpeg_cached_env = (os.getenv("FFMPEG_BIN_PATH"), os.environ.get("PATH", ""))
+    return ok
 
 
 def ensure_ffmpeg_or_raise():
