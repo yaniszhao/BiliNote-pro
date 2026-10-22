@@ -64,7 +64,11 @@ class VideoReader:
         try:
             subprocess.run(cmd, check=True)
             return output_path
-        except subprocess.CalledProcessError:
+        except subprocess.CalledProcessError as e:
+            logger.warning(
+                f"⚠️ 截帧失败: ts={ts}s ({time_label}), video={self.video_path}, "
+                f"returncode={e.returncode}, ffmpeg命令={' '.join(cmd)}"
+            )
             return None
 
     def extract_frames(self, max_frames=2000) -> list[str]:
@@ -73,6 +77,12 @@ class VideoReader:
             os.makedirs(self.frame_dir, exist_ok=True)
             duration = float(ffmpeg.probe(self.video_path)["format"]["duration"])
             timestamps = [i for i in range(0, int(duration), self.frame_interval)][:max_frames]
+            logger.info(
+                f"🔎 extract_frames 诊断: module={os.path.abspath(__file__)}, "
+                f"video={self.video_path}, duration={duration}, "
+                f"frame_interval={self.frame_interval}, max_frames={max_frames}, "
+                f"采样点={len(timestamps)} 个, 末点={timestamps[-1] if timestamps else 'N/A'}s"
+            )
 
             # 并行提取帧
             max_workers = min(os.cpu_count() or 4, 8, len(timestamps))
@@ -82,26 +92,39 @@ class VideoReader:
                 for future in as_completed(futures):
                     ts = futures[future]
                     frame_results[ts] = future.result()
+            failed = sorted(ts for ts in timestamps if not (frame_results.get(ts) and os.path.exists(frame_results[ts])))
+            if failed:
+                logger.warning(f"⚠️ 截帧完成但 {len(failed)} 个时间点失败/缺文件: {failed[:10]}{'...' if len(failed) > 10 else ''}")
 
             # 按时间戳顺序整理结果，并进行去重
             image_paths = []
             last_hash = None
+            skipped_missing = 0
+            skipped_dupe = 0
             for ts in timestamps:
                 output_path = frame_results.get(ts)
                 if not output_path or not os.path.exists(output_path):
+                    skipped_missing += 1
                     continue
 
                 if self.dedupe_enabled:
                     frame_hash = self._calculate_file_md5(output_path)
                     if frame_hash == last_hash:
                         os.remove(output_path)
+                        skipped_dupe += 1
                         continue
                     last_hash = frame_hash
 
                 image_paths.append(output_path)
+            logger.info(
+                f"🔎 截帧去重统计: 成功保留 {len(image_paths)} 张, "
+                f"提取失败/缺文件 {skipped_missing} 张, 去重删除 {skipped_dupe} 张, "
+                f"保留的最后一帧 ts={image_paths[-1] if image_paths else 'N/A'}"
+                + (f" ({os.path.basename(image_paths[-1])})" if image_paths else "")
+            )
             return image_paths
         except Exception as e:
-            logger.error(f"分割帧发生错误：{str(e)}")
+            logger.error(f"分割帧发生错误：{str(e)}", exc_info=True)
             raise ValueError("视频处理失败")
 
     def group_images(self) -> list[list[str]]:
@@ -166,6 +189,7 @@ class VideoReader:
             logger.info("开始拼接网格图...")
             image_paths = []
             groups = self.group_images()
+            logger.info(f"🔎 网格分组: 帧目录现有 {sum(1 for f in os.listdir(self.frame_dir) if f.startswith('frame_'))} 张帧文件, 分成 {len(groups)} 组 (每组 {self.grid_size[0] * self.grid_size[1]} 张)")
             for idx, group in enumerate(groups, start=1):
                 if len(group) < self.grid_size[0] * self.grid_size[1]:
                     logger.warning(f"⚠️ 跳过第 {idx} 组，图片不足 {self.grid_size[0] * self.grid_size[1]} 张")
@@ -175,9 +199,10 @@ class VideoReader:
 
             logger.info("📤 开始编码图像...")
             urls = self.encode_images_to_base64(image_paths)
+            logger.info(f"📤 编码完成: {len(urls)} 张网格图 -> {len(urls)} 个 base64 URL, 返回 {len(image_paths)} 个路径")
             return urls
         except Exception as e:
-            logger.error(f"发生错误：{str(e)}")
+            logger.error(f"发生错误：{str(e)}", exc_info=True)
             raise ValueError("视频处理失败")
 
 
