@@ -50,5 +50,7 @@ docker-compose -f docker-compose.gpu.yml up
 - [agent-docs/configuration.md](agent-docs/configuration.md) — 端口、环境变量、持久化数据位置、Docker、CORS、Tauri 打包
 - [agent-docs/workflow.md](agent-docs/workflow.md) — 分支模型、commit 规范、测试、CI、发版要点
 - [agent-docs/git-history.md](agent-docs/git-history.md) — 清理 git 历史前的存档：版本里程碑、v2.4.5 未写进 CHANGELOG 的改动、重要事件、贡献者、上游仓库
+- [agent-docs/fixes/](agent-docs/fixes/) — 具体问题的修复存档（根因分析 + 方案），新修复往这里加
+- [agent-docs/gotchas.md](agent-docs/gotchas.md) — 踩坑记录：跨会话运维/开发注意事项，随问题持续追加
 
 其他参考：`CONTRIBUTING.md`（贡献规范）、`RELEASING.md`（发版手册）、`CHANGELOG.md`、`.env.example`。
