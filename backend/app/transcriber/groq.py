@@ -23,8 +23,11 @@ logger = get_logger(__name__)
 # 边界、表单字段与文件名等开销。
 MAX_SIZE_MB = 18
 MAX_SIZE_BYTES = MAX_SIZE_MB * 1024 * 1024
-CHUNK_TARGET_BYTES = 24 * 1024 * 1024
-CHUNK_TARGET_SECONDS = 600  # 兜底切片时长（秒），探测不到音频总时长时使用
+# 切片目标 12MB。不能用 24MB：按实测码率反算出的 ~3146s/片，Groq 转写约 108s，
+# 贴着 Cloudflare 对 api.groq.com 的 120s Proxy Read Timeout 红线，源站稍慢就
+# 触发 524（retryable 但重试也无法恢复——每次都撞同一堵墙）。
+CHUNK_TARGET_BYTES = 12 * 1024 * 1024
+CHUNK_TARGET_SECONDS = 300  # 兜底切片时长（秒），探测不到音频总时长时使用
 
 
 def _get_audio_duration(file_path: str) -> Optional[float]:
