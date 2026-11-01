@@ -105,6 +105,7 @@ export default function ChatPanel({ taskId, mode, onModeChange }: ChatPanelProps
 
       const providerId = currentTask?.formData?.provider_id
       const modelName = currentTask?.formData?.model_name
+      const reasoningEffort = currentTask?.formData?.reasoning_effort
       if (!providerId || !modelName) {
         toast.error('无法获取模型配置，请确认任务已完成')
         return
@@ -122,6 +123,7 @@ export default function ChatPanel({ taskId, mode, onModeChange }: ChatPanelProps
           history,
           provider_id: providerId,
           model_name: modelName,
+          reasoning_effort: reasoningEffort,
         })
         addMessage(taskId, {
           role: 'assistant',

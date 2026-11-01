@@ -3,7 +3,7 @@ import { onMounted, ref } from 'vue'
 import { getProviders, ping } from '~/logic/api'
 import { settings, settingsReady } from '~/logic/storage'
 import { getModelsByProvider } from '~/logic/api'
-import { NOTE_FORMATS, NOTE_STYLES, type Model, type NoteFormat, type Provider } from '~/logic/types'
+import { NOTE_FORMATS, NOTE_STYLES, REASONING_EFFORTS, type Model, type NoteFormat, type Provider } from '~/logic/types'
 import { watch } from 'vue'
 
 function toggleFormat(value: NoteFormat, checked: boolean) {
@@ -138,6 +138,13 @@ onMounted(async () => {
           <select v-model="settings.style" class="input">
             <option v-for="s in NOTE_STYLES" :key="s.value" :value="s.value">{{ s.label }}</option>
           </select>
+        </label>
+        <label class="flex flex-col gap-1">
+          <span class="text-gray-600">思考强度</span>
+          <select v-model="settings.reasoning_effort" class="input">
+            <option v-for="e in REASONING_EFFORTS" :key="e.value" :value="e.value">{{ e.label }}</option>
+          </select>
+          <span class="text-xs text-gray-400">仅对推理模型生效，普通模型会忽略</span>
         </label>
       </div>
 

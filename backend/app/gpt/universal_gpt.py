@@ -12,15 +12,22 @@ from app.gpt.prompt import BASE_PROMPT, AI_SUM, SCREENSHOT, LINK, MERGE_PROMPT
 from app.gpt.utils import fix_markdown
 from app.gpt.request_chunker import RequestChunker
 from app.models.transcriber_model import TranscriptSegment
+from app.utils.logger import get_logger
 from datetime import timedelta
 from typing import List
 
+logger = get_logger(__name__)
+
 
 class UniversalGPT(GPT):
-    def __init__(self, client, model: str, temperature: float = 0.7):
+    def __init__(self, client, model: str, temperature: float = 0.7, reasoning_effort: str | None = "low"):
         self.client = client
         self.model = model
         self.temperature = temperature
+        # 思考强度（reasoning_effort）：low / medium / high，None 表示不传、走模型端默认。
+        # 仅对推理模型（OpenAI o/gpt-5 系列、GLM、Qwen thinking 等）生效，普通模型会被供应商忽略或拒绝，
+        # 拒绝时 _do_create 会自动去掉该参数重试一次。
+        self.reasoning_effort = reasoning_effort
         self.screenshot = False
         self.link = False
         # 默认 28MB：发送给模型的请求体（含 base64 图片）会按此阈值分块。
@@ -106,6 +113,7 @@ class UniversalGPT(GPT):
         payload = {
             "model": self.model,
             "temperature": self.temperature,
+            "reasoning_effort": self.reasoning_effort,
             "max_request_bytes": self.max_request_bytes,
             "title": source.title,
             "tags": source.tags,
@@ -199,23 +207,60 @@ class UniversalGPT(GPT):
             or "only the default" in raw
         )
 
+    @staticmethod
+    def _is_reasoning_effort_unsupported_error(exc: Exception) -> bool:
+        """普通（非推理）模型不认识 reasoning_effort 参数，
+        通常报 `unrecognized argument` / `unexpected ... reasoning_effort` / `Extra inputs are not permitted`。"""
+        raw = str(exc).lower()
+        return "reasoning_effort" in raw and (
+            "unrecognized" in raw
+            or "unexpected" in raw
+            or "unknown" in raw
+            or "not supported" in raw
+            or "extra inputs" in raw
+            or "unsupported_value" in raw
+            or "invalid" in raw
+        )
+
     def _do_create(self, messages: list):
-        """单次调用。如果模型拒绝自定义 temperature，就地去掉该参数再试一次
-        （不消耗外层的重试次数预算），仍失败则把异常抛给外层重试逻辑。"""
-        try:
-            return self.client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                temperature=self.temperature,
-            )
-        except Exception as exc:
-            if self._is_temperature_unsupported_error(exc):
-                print(f"[universal_gpt] 模型 {self.model} 不支持自定义 temperature，改用默认值重试")
-                return self.client.chat.completions.create(
-                    model=self.model,
-                    messages=messages,
+        """单次调用。带上 reasoning_effort（如配置了）。
+
+        如果模型拒绝某个采样参数（temperature / reasoning_effort），就地去掉该参数
+        再试一次（不消耗外层的重试次数预算），仍失败则把异常抛给外层重试逻辑。"""
+        stripped = set()
+        attempted_logged = False
+        while True:
+            kwargs = {
+                "model": self.model,
+                "messages": messages,
+            }
+            if "temperature" not in stripped:
+                kwargs["temperature"] = self.temperature
+            if "reasoning_effort" not in stripped and self.reasoning_effort:
+                kwargs["reasoning_effort"] = self.reasoning_effort
+
+            if not attempted_logged:
+                # 每个任务首个请求记录一次实际生效的调用参数，便于排查生成质量与费用
+                logger.info(
+                    f"LLM 调用参数: model={self.model}, "
+                    f"reasoning_effort={self.reasoning_effort or '模型端默认'}, "
+                    f"temperature={self.temperature}"
                 )
-            raise
+                attempted_logged = True
+
+            try:
+                return self.client.chat.completions.create(**kwargs)
+            except Exception as exc:
+                if "temperature" not in stripped and self._is_temperature_unsupported_error(exc):
+                    logger.info(f"模型 {self.model} 不支持自定义 temperature，改用默认值重试")
+                    stripped.add("temperature")
+                    continue
+                if "reasoning_effort" not in stripped and self.reasoning_effort \
+                        and self._is_reasoning_effort_unsupported_error(exc):
+                    logger.info(f"模型 {self.model} 不支持 reasoning_effort，去掉该参数重试")
+                    stripped.add("reasoning_effort")
+                    continue
+                raise
 
     def _chat_completion_create(self, messages: list):
         last_exc = None

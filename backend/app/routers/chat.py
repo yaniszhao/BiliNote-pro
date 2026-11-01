@@ -1,3 +1,5 @@
+from typing import Optional
+
 from fastapi import APIRouter, BackgroundTasks
 from pydantic import BaseModel
 
@@ -29,6 +31,8 @@ class AskRequest(BaseModel):
     history: list[ChatMessage] = []
     provider_id: str
     model_name: str
+    # 思考强度：low / medium / high，None 走模型端默认
+    reasoning_effort: Optional[str] = "low"
 
 
 def _do_index(task_id: str):
@@ -92,6 +96,7 @@ def ask_question(data: AskRequest):
             history=history,
             provider_id=data.provider_id,
             model_name=data.model_name,
+            reasoning_effort=data.reasoning_effort,
         )
         return R.success(data=result)
     except ValueError as e:

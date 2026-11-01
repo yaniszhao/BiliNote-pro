@@ -7,6 +7,7 @@ export const DEFAULT_SETTINGS: Settings = {
   providerId: '',
   modelName: '',
   quality: 'medium',
+  reasoning_effort: 'low',
   formats: ['toc', 'summary'],
   screenshot: false,
   link: false,

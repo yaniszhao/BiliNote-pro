@@ -65,6 +65,7 @@ async function send() {
       history: messages.value.slice(0, -1),
       provider_id: settings.value.providerId,
       model_name: settings.value.modelName,
+      reasoning_effort: settings.value.reasoning_effort || 'low',
     }) as { answer?: string, content?: string, message?: string } | string
     const reply = typeof res === 'string'
       ? res

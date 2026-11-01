@@ -1,6 +1,8 @@
 // 与 backend/app/routers/note.py / provider.py / model.py 对齐
 export type Platform = 'bilibili' | 'youtube' | 'douyin' | 'kuaishou' | 'local'
 export type Quality = 'fast' | 'medium' | 'slow'
+// 与 backend/app/routers/note.py VideoRequest.reasoning_effort 对齐
+export type ReasoningEffort = 'low' | 'medium' | 'high'
 
 export type TaskStatus =
   | 'PENDING'
@@ -35,6 +37,7 @@ export interface GenerateRequest {
   quality: Quality
   model_name: string
   provider_id: string
+  reasoning_effort?: ReasoningEffort
   screenshot?: boolean
   link?: boolean
   format?: string[]
@@ -111,11 +114,19 @@ export const NOTE_FORMATS: Array<{ value: NoteFormat, label: string }> = [
   { value: 'link', label: '原片跳转' },
 ]
 
+export const REASONING_EFFORTS: Array<{ value: ReasoningEffort, label: string }> = [
+  { value: 'low', label: '低（更快更省）' },
+  { value: 'medium', label: '中' },
+  { value: 'high', label: '高（更深入）' },
+]
+
 export interface Settings {
   backendUrl: string
   providerId: string
   modelName: string
   quality: Quality
+  // 思考强度：控制模型的推理深度，仅对推理模型生效
+  reasoning_effort: ReasoningEffort
   // 输出 format 的 toggle 集合（screenshot / link 与下方两个布尔保持联动）
   formats: NoteFormat[]
   screenshot: boolean

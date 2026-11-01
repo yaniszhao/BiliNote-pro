@@ -7,6 +7,7 @@ export const generateNote = async (data: {
   quality: string
   model_name: string
   provider_id: string
+  reasoning_effort?: 'low' | 'medium' | 'high'
   task_id?: string
   format: Array<string>
   style: string

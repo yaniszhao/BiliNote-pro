@@ -87,6 +87,7 @@ class NoteGenerator:
         task_id: Optional[str] = None,
         model_name: Optional[str] = None,
         provider_id: Optional[str] = None,
+        reasoning_effort: Optional[str] = None,
         link: bool = False,
         screenshot: bool = False,
         _format: Optional[List[str]] = None,
@@ -106,6 +107,7 @@ class NoteGenerator:
         :param task_id: 用于标识本次任务的唯一 ID，亦用于状态文件和缓存文件命名
         :param model_name: GPT 模型名称
         :param provider_id: 模型供应商 ID
+        :param reasoning_effort: 思考强度（low / medium / high），None 走模型端默认
         :param link: 是否在笔记中插入视频片段链接
         :param screenshot: 是否在笔记中替换 Screenshot 标记为图片
         :param _format: 包含 'link' 或 'screenshot' 等字符串的列表，决定后续处理
@@ -121,13 +123,16 @@ class NoteGenerator:
             grid_size = []
 
         try:
-            logger.info(f"开始生成笔记 (task_id={task_id})")
+            logger.info(
+                f"开始生成笔记 (task_id={task_id}, model={model_name}, provider_id={provider_id}, "
+                f"reasoning_effort={reasoning_effort or '模型端默认'})"
+            )
             self._update_status(task_id, TaskStatus.PARSING)
 
             # 获取下载器与 GPT 实例
 
             downloader = self._get_downloader(platform)
-            gpt = self._get_gpt(model_name, provider_id)
+            gpt = self._get_gpt(model_name, provider_id, reasoning_effort)
 
             # 缓存文件路径
             audio_cache_file = NOTE_OUTPUT_DIR / f"{task_id}_audio.json"
@@ -267,24 +272,27 @@ class NoteGenerator:
             model_size=self.model_size,
         )
 
-    def _get_gpt(self, model_name: Optional[str], provider_id: Optional[str]) -> GPT:
+    def _get_gpt(self, model_name: Optional[str], provider_id: Optional[str],
+                 reasoning_effort: Optional[str] = None) -> GPT:
         """
         根据 provider_id 获取对应的 GPT 实例
         :param model_name: GPT 模型名称
         :param provider_id: 供应商 ID
+        :param reasoning_effort: 思考强度（low / medium / high）
         :return: GPT 实例
         """
         provider = ProviderService.get_provider_by_id(provider_id)
         if not provider:
             logger.error(f"[get_gpt] 未找到模型供应商: provider_id={provider_id}")
             raise ProviderError(code=ProviderErrorEnum.NOT_FOUND,message=ProviderErrorEnum.NOT_FOUND.message)
-        logger.info(f"创建 GPT 实例 {provider_id}")
+        logger.info(f"创建 GPT 实例 {provider_id} (reasoning_effort={reasoning_effort})")
         config = ModelConfig(
             api_key=provider["api_key"],
             base_url=provider["base_url"],
             model_name=model_name,
             provider=provider["type"],
             name=provider["name"],
+            reasoning_effort=reasoning_effort,
         )
         return GPTFactory().from_config(config)
 

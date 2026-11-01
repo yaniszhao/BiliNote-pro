@@ -26,6 +26,12 @@ export const noteStyles = [
   { label: '会议纪要', value: 'meeting_minutes' },
 ] as const
 
+export const reasoningEfforts = [
+  { label: '低（更快更省）', value: 'low' },
+  { label: '中', value: 'medium' },
+  { label: '高（更深入）', value: 'high' },
+] as const
+
 export const videoPlatforms = [
   { label: '哔哩哔哩', value: 'bilibili', logo: BiliBiliLogo },
   { label: 'YouTube', value: 'youtube', logo: YoutubeLogo },

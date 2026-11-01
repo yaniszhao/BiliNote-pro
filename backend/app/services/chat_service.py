@@ -2,6 +2,7 @@ import json
 from typing import Optional
 
 from app.gpt.gpt_factory import GPTFactory
+from app.gpt.universal_gpt import UniversalGPT
 from app.models.model_config import ModelConfig
 from app.services.provider import ProviderService
 from app.services.vector_store import VectorStoreManager
@@ -72,6 +73,7 @@ def chat(
     history: list[dict],
     provider_id: str,
     model_name: str,
+    reasoning_effort: Optional[str] = "low",
 ) -> dict:
     """
     RAG + Tool Calling 问答。
@@ -107,20 +109,34 @@ def chat(
         model_name=model_name,
         provider=provider["type"],
         name=provider["name"],
+        reasoning_effort=reasoning_effort,
     )
     gpt = GPTFactory.from_config(config)
 
-    logger.info(f"Chat: task_id={task_id}, model={model_name}")
+    logger.info(f"Chat: task_id={task_id}, model={model_name}, reasoning_effort={reasoning_effort}")
+
+    def _bare_create(**extra):
+        kwargs = {
+            "model": gpt.model,
+            "messages": messages,
+            "temperature": 0.7,
+            **extra,
+        }
+        if gpt.reasoning_effort:
+            kwargs["reasoning_effort"] = gpt.reasoning_effort
+        try:
+            return gpt.client.chat.completions.create(**kwargs)
+        except Exception as exc:
+            # 非 OpenAI 规范的模型可能不认识 reasoning_effort，去掉该参数再试一次
+            if gpt.reasoning_effort and UniversalGPT._is_reasoning_effort_unsupported_error(exc):
+                kwargs.pop("reasoning_effort")
+                return gpt.client.chat.completions.create(**kwargs)
+            raise
 
     # 4. Tool calling 循环（最多 3 轮）
     max_rounds = 3
     for round_i in range(max_rounds):
-        response = gpt.client.chat.completions.create(
-            model=gpt.model,
-            messages=messages,
-            tools=TOOLS,
-            temperature=0.7,
-        )
+        response = _bare_create(tools=TOOLS)
 
         msg = response.choices[0].message
 

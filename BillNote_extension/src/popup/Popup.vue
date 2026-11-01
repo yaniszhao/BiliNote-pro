@@ -76,6 +76,7 @@ async function start() {
       quality: settings.value.quality,
       provider_id: settings.value.providerId,
       model_name: settings.value.modelName,
+      reasoning_effort: settings.value.reasoning_effort || 'low',
       // backend VideoRequest 同时接受 format 数组与 screenshot/link 单独布尔，从 formats 派生保持单一真相源
       format: [...formats],
       screenshot: formats.includes('screenshot'),

@@ -43,6 +43,8 @@ class VideoRequest(BaseModel):
     link: Optional[bool] = False
     model_name: str
     provider_id: str
+    # 思考强度：low / medium / high，None 走模型端默认
+    reasoning_effort: Optional[str] = "low"
     task_id: Optional[str] = None
     format: Optional[list] = []
     style: str = None
@@ -123,6 +125,7 @@ def _persist_prefetched_transcript(task_id: str, transcript: dict) -> None:
 
 def run_note_task(task_id: str, video_url: str, platform: str, quality: DownloadQuality,
                   link: bool = False, screenshot: bool = False, model_name: str = None, provider_id: str = None,
+                  reasoning_effort: str = "low",
                   _format: list = None, style: str = None, extras: str = None, video_understanding: bool = False,
                   video_interval=0, grid_size=[]
                   ):
@@ -138,6 +141,7 @@ def run_note_task(task_id: str, video_url: str, platform: str, quality: Download
             task_id=task_id,
             model_name=model_name,
             provider_id=provider_id,
+            reasoning_effort=reasoning_effort,
             link=link,
             _format=_format,
             style=style,
@@ -236,8 +240,9 @@ def generate_note(data: VideoRequest, background_tasks: BackgroundTasks):
                 logger.warning(f"写入预取字幕失败 (task_id={task_id}): {e}")
 
         background_tasks.add_task(run_note_task, task_id, data.video_url, data.platform, data.quality, data.link,
-                                  data.screenshot, data.model_name, data.provider_id, data.format, data.style,
-                                  data.extras, data.video_understanding, data.video_interval, data.grid_size)
+                                  data.screenshot, data.model_name, data.provider_id, data.reasoning_effort,
+                                  data.format, data.style, data.extras, data.video_understanding,
+                                  data.video_interval, data.grid_size)
         return R.success({"task_id": task_id})
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

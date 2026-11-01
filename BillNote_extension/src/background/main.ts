@@ -83,6 +83,7 @@ async function startTask(url: string, title?: string): Promise<{ ok: boolean, ta
         quality: settings.quality,
         provider_id: settings.providerId,
         model_name: settings.modelName,
+        reasoning_effort: settings.reasoning_effort || 'low',
         // backend 同时接受 format 数组与 screenshot/link 单独布尔；从 formats 派生保持单一真相源
         format: [...formats],
         screenshot: formats.includes('screenshot'),
