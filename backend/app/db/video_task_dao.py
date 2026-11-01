@@ -42,6 +42,44 @@ def get_task_by_video(video_id: str, platform: str):
         db.close()
 
 
+# 按 task_id 查询任务记录（video_id+platform 组合兜底时用）
+def get_tasks_by_video(video_id: str, platform: str) -> list:
+    db = next(get_db())
+    try:
+        tasks = (
+            db.query(VideoTask)
+            .filter_by(video_id=video_id, platform=platform)
+            .order_by(VideoTask.created_at.desc())
+            .all()
+        )
+        return tasks
+    except Exception as e:
+        logger.error(f"Failed to get tasks by video: {e}")
+        return []
+    finally:
+        db.close()
+
+
+# 按 task_id 删除任务记录
+def delete_task_by_task_id(task_id: str) -> int:
+    db = next(get_db())
+    try:
+        count = (
+            db.query(VideoTask)
+            .filter_by(task_id=task_id)
+            .delete()
+        )
+        db.commit()
+        logger.info(f"Task deleted by task_id: {task_id} (count={count})")
+        return count
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Failed to delete task by task_id: {e}")
+        return 0
+    finally:
+        db.close()
+
+
 # 删除任务
 def delete_task_by_video(video_id: str, platform: str):
     db = next(get_db())

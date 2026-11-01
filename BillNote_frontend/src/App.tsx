@@ -2,6 +2,7 @@ import './App.css'
 import { lazy, Suspense, useEffect } from 'react'
 import { BrowserRouter, HashRouter, Navigate, Routes, Route } from 'react-router-dom'
 import { useTaskPolling } from '@/hooks/useTaskPolling.ts'
+import { useTaskRestore } from '@/hooks/useTaskRestore.ts'
 import { useCheckBackend } from '@/hooks/useCheckBackend.ts'
 import { systemCheck } from '@/services/system.ts'
 import BackendInitDialog from '@/components/BackendInitDialog'
@@ -34,6 +35,7 @@ const NotFoundPage = lazy(() => import('@/pages/NotFoundPage'))
 function App() {
   useTaskPolling(3000) // 每 3 秒轮询一次
   const { loading, initialized, failed, lastError, retry } = useCheckBackend()
+  useTaskRestore(initialized) // 后端就绪后从后端恢复「生成历史」
 
   // 在后端初始化完成后执行系统检查
   useEffect(() => {

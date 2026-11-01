@@ -6,7 +6,8 @@ import toast from 'react-hot-toast'
 import { get, set, del } from 'idb-keyval'
 
 
-export type TaskStatus = 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILD'
+// 'FAILD' 是历史遗留拼写（旧持久化数据里存在），保留用于兼容；新代码统一用 'FAILED'
+export type TaskStatus = 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILD' | 'FAILED'
 
 export interface AudioMeta {
   cover_url: string
@@ -45,15 +46,8 @@ export interface Task {
   status: TaskStatus
   audioMeta: AudioMeta
   createdAt: string
-  formData: {
-    video_url: string
-    link: undefined | boolean
-    screenshot: undefined | boolean
-    platform: string
-    quality: string
-    model_name: string
-    provider_id: string
-  }
+  // 后端恢复的任务会带全量表单参数（style/reasoning_effort/format 等），放宽为记录类型
+  formData: Record<string, any>
 }
 
 interface TaskStore {
@@ -61,6 +55,9 @@ interface TaskStore {
   currentTaskId: string | null
   addPendingTask: (taskId: string, platform: string) => void
   updateTaskContent: (id: string, data: Partial<Omit<Task, 'id' | 'createdAt'>>) => void
+  // 轮询 hook（useTaskPolling）在用，此前 store 漏了这个方法，顺手补上
+  updateTaskStatus: (id: string, status: TaskStatus) => void
+  mergeRestoredTasks: (restored: Task[]) => void
   removeTask: (id: string) => void
   clearTasks: () => void
   setCurrentTask: (taskId: string | null) => void
@@ -154,6 +151,58 @@ export const useTaskStore = create<TaskStore>()(
           })),
 
 
+      updateTaskStatus: (id, status) => get().updateTaskContent(id, { status }),
+
+      // 从后端恢复历史任务：按 id 批量 upsert。
+      // 本地已有的任务只补缺失字段（不覆盖本地内容/状态）；新任务补齐骨架默认值。
+      // 不动 currentTaskId——恢复是后台行为，不能抢用户当前视图。
+      mergeRestoredTasks: restored =>
+        set(state => {
+          if (!restored?.length) return state
+          const byId = new Map<string, Task>()
+          for (const t of state.tasks) byId.set(t.id, t)
+
+          const isBlank = (v: any) =>
+            v === undefined || v === null || v === '' ||
+            (Array.isArray(v) && v.length === 0)
+
+          for (const restoredTask of restored) {
+            if (!restoredTask?.id) continue
+            const existing = byId.get(restoredTask.id)
+            if (existing) {
+              const merged: Task = { ...existing }
+              for (const [k, v] of Object.entries(restoredTask)) {
+                if (v === undefined || v === null) continue
+                if (k === 'transcript') {
+                  if (!existing.transcript?.segments?.length && v.segments?.length) merged.transcript = v
+                  continue
+                }
+                if (k === 'audioMeta') {
+                  if (!existing.audioMeta?.title && v.title) merged.audioMeta = v
+                  continue
+                }
+                if (k === 'markdown') continue // markdown 版本合并交给 updateTaskContent
+                if (isBlank((existing as any)[k])) (merged as any)[k] = v
+              }
+              byId.set(restoredTask.id, merged)
+            } else {
+              byId.set(restoredTask.id, {
+                markdown: '',
+                transcript: { full_text: '', language: '', raw: null, segments: [] },
+                audioMeta: {
+                  cover_url: '', duration: 0, file_path: '', platform: '', raw_info: null, title: '', video_id: '',
+                },
+                ...restoredTask,
+              } as Task)
+            }
+          }
+
+          const tasks = [...byId.values()].sort((a, b) =>
+            (b.createdAt || '').localeCompare(a.createdAt || ''),
+          )
+          return { tasks }
+        }),
+
       getCurrentTask: () => {
         const currentTaskId = get().currentTaskId
         return get().tasks.find(task => task.id === currentTaskId) || null
@@ -206,19 +255,24 @@ export const useTaskStore = create<TaskStore>()(
       removeTask: async id => {
         const task = get().tasks.find(t => t.id === id)
 
-        // 更新 Zustand 状态
+        // 先调后端真删除（结果文件/截图/向量索引/DB），成功才动本地状态；
+        // 失败则保留条目（拦截器已 toast），避免「本地看着删了、刷新又回来」的假象
+        if (task) {
+          try {
+            await delete_task({
+              task_id: id,
+              video_id: task.audioMeta?.video_id,
+              platform: task.platform,
+            })
+          } catch (e) {
+            return
+          }
+        }
+
         set(state => ({
           tasks: state.tasks.filter(task => task.id !== id),
           currentTaskId: state.currentTaskId === id ? null : state.currentTaskId,
         }))
-
-        // 调用后端删除接口（如果找到了任务）
-        if (task) {
-          await delete_task({
-            video_id: task.audioMeta.video_id,
-            platform: task.platform,
-          })
-        }
       },
 
       clearTasks: () => set({ tasks: [], currentTaskId: null }),

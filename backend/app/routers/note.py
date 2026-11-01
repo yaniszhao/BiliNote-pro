@@ -1,7 +1,9 @@
 # app/routers/note.py
 import json
 import os
+import shutil
 import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
@@ -10,11 +12,12 @@ from fastapi import APIRouter, HTTPException, BackgroundTasks, UploadFile, File
 from pydantic import BaseModel, validator, field_validator, model_validator
 from dataclasses import asdict
 
-from app.db.video_task_dao import get_task_by_video
+from app.db.video_task_dao import delete_task_by_task_id, delete_task_by_video, get_tasks_by_video
 from app.enmus.exception import NoteErrorEnum
 from app.enmus.note_enums import DownloadQuality
 from app.exceptions.note import NoteError
-from app.services.note import NoteGenerator, logger
+from app.services.note import IMAGE_BASE_URL, IMAGE_OUTPUT_DIR, NoteGenerator, logger
+from app.services.task_meta import TASK_ID_RE, load_task_meta, list_task_ids, save_task_meta
 from app.services.task_serial_executor import task_serial_executor
 from app.utils.response import ResponseWrapper as R
 from app.utils.url_parser import extract_video_id, normalize_video_url
@@ -31,8 +34,10 @@ router = APIRouter()
 
 
 class RecordRequest(BaseModel):
-    video_id: str
-    platform: str
+    # 新调用传 task_id（前端 task.id）；旧调用传 video_id+platform（兼容）
+    task_id: Optional[str] = None
+    video_id: Optional[str] = None
+    platform: Optional[str] = None
 
 
 class VideoRequest(BaseModel):
@@ -87,6 +92,18 @@ def save_note_to_file(task_id: str, note):
     os.makedirs(NOTE_OUTPUT_DIR, exist_ok=True)
     with open(os.path.join(NOTE_OUTPUT_DIR, f"{task_id}.json"), "w", encoding="utf-8") as f:
         json.dump(asdict(note), f, ensure_ascii=False, indent=2)
+
+    # 把标题等摘要信息合并进任务元数据，历史列表无需读重量级结果文件即可展示/搜索
+    try:
+        audio_meta = getattr(note, "audio_meta", None)
+        save_task_meta(task_id, {
+            "title": getattr(audio_meta, "title", "") or "",
+            "cover_url": getattr(audio_meta, "cover_url", "") or "",
+            "duration": getattr(audio_meta, "duration", None),
+            "finished_at": datetime.now().isoformat(timespec="seconds"),
+        }, merge=True)
+    except Exception as e:
+        logger.warning(f"补写任务元数据失败 (task_id={task_id})：{e}")
 
 
 def _persist_prefetched_transcript(task_id: str, transcript: dict) -> None:
@@ -170,12 +187,126 @@ def run_note_task(task_id: str, video_url: str, platform: str, quality: Download
 
 @router.post('/delete_task')
 def delete_task(data: RecordRequest):
+    """真正删除任务：结果/缓存文件 + 截图目录 + 向量索引 + 数据库记录。"""
     try:
-        # TODO: 待持久化完成
-        # NoteGenerator().delete_note(video_id=data.video_id, platform=data.platform)
+        if data.task_id:
+            if not TASK_ID_RE.fullmatch(data.task_id):
+                # 非法 ID 一律拒绝，防止 ../ 路径穿越
+                return R.error(msg='非法 task_id')
+            task_ids = [data.task_id]
+        elif data.video_id and data.platform:
+            # 旧调用兼容：按 video_id+platform 查出关联的所有 task_id
+            task_ids = [t.task_id for t in get_tasks_by_video(data.video_id, data.platform)]
+        else:
+            return R.error(msg='缺少 task_id 或 video_id+platform')
+
+        for tid in task_ids:
+            _delete_task_artifacts(tid)
+
+        if not data.task_id and data.video_id and data.platform:
+            # 旧调用兜底路径：整组删除 DB 记录
+            delete_task_by_video(data.video_id, data.platform)
+
         return R.success(msg='删除成功')
     except Exception as e:
-        return R.error(msg=e)
+        logger.error(f"删除任务失败：{e}", exc_info=True)
+        return R.error(msg=str(e))
+
+
+def _delete_media_files(task_id: str) -> None:
+    """删除该任务下载的音/视频缓存文件（data 目录下的 {video_id}.mp3/.mp4）。
+
+    同一视频可能被多个任务引用（重复生成不重新下载时 audio.json 指向同一路径），
+    删除前先检查其他任务的 _audio.json 是否仍引用同一文件，有引用则保留，
+    避免误删别的笔记的缓存。必须在删 {task_id}_audio.json 之前调用。
+    """
+    audio_cache = Path(NOTE_OUTPUT_DIR) / f"{task_id}_audio.json"
+    if not audio_cache.exists():
+        return
+    try:
+        info = json.loads(audio_cache.read_text(encoding="utf-8"))
+    except Exception:
+        return
+
+    file_path = info.get("file_path")
+    video_path = info.get("video_path")
+    video_id = info.get("video_id")
+    targets = {t for t in (file_path, video_path) if t and isinstance(t, str)}
+    # download_video 的固定命名：与音频同目录的 {video_id}.mp4（video_path 为空时兜底）
+    if file_path and video_id:
+        targets.add(os.path.join(os.path.dirname(file_path), f"{video_id}.mp4"))
+    if not targets:
+        return
+
+    referenced: set[str] = set()
+    try:
+        for name in os.listdir(NOTE_OUTPUT_DIR):
+            if not name.endswith("_audio.json") or name.startswith(task_id):
+                continue
+            try:
+                other = json.loads((Path(NOTE_OUTPUT_DIR) / name).read_text(encoding="utf-8"))
+                referenced.add(other.get("file_path") or "")
+                referenced.add(other.get("video_path") or "")
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+    for target in targets:
+        try:
+            p = Path(target)
+            if p.is_file() and target not in referenced:
+                p.unlink()
+                logger.info(f"已删除媒体文件: {target}")
+        except Exception as e:
+            logger.warning(f"删除媒体文件失败 ({target})：{e}")
+
+
+def _delete_task_artifacts(task_id: str) -> None:
+    """删除一个任务的全部本地产物。task_id 必须是 UUID 形式，防路径穿越。"""
+    from app.services.task_meta import TASK_ID_RE
+    if not TASK_ID_RE.fullmatch(task_id or ""):
+        logger.warning(f"拒绝删除非法 task_id: {task_id!r}")
+        return
+
+    # 先读 audio.json 拿媒体路径并删除（顺序敏感：audio.json 之后就被删了）
+    _delete_media_files(task_id)
+
+    base = Path(NOTE_OUTPUT_DIR).resolve()
+    # note_results 下的结果与缓存文件（含 checkpoint / meta）
+    suffixes = (
+        ".json", ".status.json", "_transcript.json", "_audio.json",
+        "_markdown.md", "_markdown.status.json", ".gpt.checkpoint.json", "_meta.json",
+    )
+    for suffix in suffixes:
+        p = (base / f"{task_id}{suffix}")
+        if p.parent == base:
+            p.unlink(missing_ok=True)
+
+    # 截图子目录：resolved 后必须是 IMAGE_OUTPUT_DIR 的直接子目录，防 ../static 穿越
+    screenshot_dir = Path(IMAGE_OUTPUT_DIR).resolve() / task_id
+    screenshot_root = Path(IMAGE_OUTPUT_DIR).resolve()
+    if screenshot_dir.parent == screenshot_root and screenshot_dir.is_dir():
+        shutil.rmtree(screenshot_dir, ignore_errors=True)
+        logger.info(f"已删除截图目录: {screenshot_dir}")
+
+    # 向量索引（RAG 问答），失败不影响删除流程
+    try:
+        from app.services.vector_store import VectorStoreManager
+        VectorStoreManager().delete_index(task_id)
+    except Exception as e:
+        logger.warning(f"删除向量索引失败 (task_id={task_id})：{e}")
+
+    # 问答面板的内存索引状态
+    try:
+        from app.routers.chat import _index_status
+        _index_status.pop(task_id, None)
+    except Exception:
+        pass
+
+    # 数据库记录
+    delete_task_by_task_id(task_id)
+    logger.info(f"任务产物已清理 (task_id={task_id})")
 
 
 @router.post("/upload")
@@ -232,6 +363,17 @@ def generate_note(data: VideoRequest, background_tasks: BackgroundTasks):
         # 统一先写入 PENDING，表示已进入队列等待串行执行
         NoteGenerator()._update_status(task_id, TaskStatus.PENDING)
 
+        # 入口即落盘表单参数（{task_id}_meta.json）：进行中/失败的任务也能从「生成历史」
+        # 恢复出完整 formData，支持重试与 AI 问答。重试复用 task_id 时 merge 覆盖为最新参数。
+        save_task_meta(task_id, {
+            "task_id": task_id,
+            "video_url": data.video_url,
+            "video_id": video_id,
+            "platform": data.platform,
+            "created_at": datetime.now().isoformat(timespec="seconds"),
+            "form_data": data.model_dump(exclude={"prefetched_transcript"}),
+        }, merge=True)
+
         # 客户端已经抓好字幕的话，写到转写缓存文件，NoteGenerator 的 cache-hit 逻辑会直接用上
         if data.prefetched_transcript:
             try:
@@ -246,6 +388,46 @@ def generate_note(data: VideoRequest, background_tasks: BackgroundTasks):
         return R.success({"task_id": task_id})
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/task_list")
+def get_task_list():
+    """列出所有历史任务（轻量：不含 markdown/transcript 全文）。
+
+    数据源为 note_results/ 文件扫描（status.json 在任务入口就写，覆盖进行中/失败态；
+    video_tasks 表只在成功后才有记录，故只作兜底而不是主数据源）。
+    全文由前端按需调 /task_status/{task_id} 获取。
+    """
+    tasks = []
+    for tid in list_task_ids():
+        try:
+            meta = load_task_meta(tid)
+            status_data = {}
+            status_path = os.path.join(NOTE_OUTPUT_DIR, f"{tid}.status.json")
+            if os.path.exists(status_path):
+                try:
+                    with open(status_path, "r", encoding="utf-8") as f:
+                        status_data = json.load(f)
+                except Exception:
+                    status_data = {}
+            has_result = os.path.exists(os.path.join(NOTE_OUTPUT_DIR, f"{tid}.json"))
+            status = status_data.get("status") or (TaskStatus.SUCCESS.value if has_result else TaskStatus.PENDING.value)
+            tasks.append({
+                "task_id": tid,
+                "status": status,
+                "message": status_data.get("message", ""),
+                "created_at": meta.get("created_at", ""),
+                "video_id": meta.get("video_id", ""),
+                "platform": meta.get("platform", ""),
+                "title": meta.get("title", ""),
+                "cover_url": meta.get("cover_url", ""),
+                "has_result": has_result,
+                "form_data": meta.get("form_data", {}),
+            })
+        except Exception as e:
+            # 单个任务的文件损坏不影响整个列表
+            logger.warning(f"读取任务 {tid} 信息失败，跳过：{e}")
+    return R.success({"tasks": tasks})
 
 
 @router.get("/task_status/{task_id}")

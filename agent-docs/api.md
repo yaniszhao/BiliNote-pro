@@ -3,9 +3,10 @@
 所有路由前缀都是 `/api`，返回体统一由 `app/utils/response.py:ResponseWrapper` 包装。前端客户端在 `BillNote_frontend/src/services/`，插件客户端在 `BillNote_extension/src/logic/api.ts`。
 
 ## 笔记 `routers/note.py`
-- `POST /generate_note` — 提交生成任务，返回 task_id
-- `GET /task_status/{task_id}` — 查询任务状态/结果（前端和插件都在轮询这个接口）
-- `POST /delete_task`
+- `POST /generate_note` — 提交生成任务，返回 task_id；入口即落盘 `{task_id}_meta.json`（表单参数快照，供历史恢复）
+- `GET /task_list` — 列出全部历史任务（轻量：task_id/status/title/cover_url/form_data 等，不含 markdown 全文；数据源为 note_results/ 文件扫描）
+- `GET /task_status/{task_id}` — 查询任务状态/结果（前端和插件都在轮询这个接口；SUCCESS 响应含完整 result，前端恢复历史时也用它拉全文）
+- `POST /delete_task` — 真删除：结果/缓存文件 + 截图目录 `static/screenshots/{task_id}/` + 向量索引 + video_tasks 记录；新调用传 `task_id`，旧 `video_id+platform` 兼容
 - `POST /upload` — 上传本地视频（存到 `uploads/`）
 - `GET /image_proxy` — 代理平台图片（防盗链）
 
@@ -26,5 +27,5 @@
 - `POST /chat/ask`
 
 ## 静态资源（不带 `/api` 前缀）
-- `/static/...` — 截图（`OUT_DIR`，默认 `./static/screenshots`）
+- `/static/...` — 截图（`OUT_DIR`，默认 `./static/screenshots`；新笔记按任务分子目录 `{task_id}/`，历史平铺文件保留不动）
 - `/uploads/...` — 上传的本地视频

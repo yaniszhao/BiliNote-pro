@@ -226,6 +226,7 @@ class NoteGenerator:
                     formats=_format,
                     audio_meta=audio_meta,
                     platform=platform,
+                    task_id=task_id,
                 )
 
             markdown = prepend_source_link(markdown, str(video_url))
@@ -636,6 +637,7 @@ class NoteGenerator:
         formats: List[str],
         audio_meta: AudioDownloadResult,
         platform: str,
+        task_id: Optional[str] = None,
     ) -> str:
         """
         对生成的 Markdown 做后期处理：插入截图和/或插入链接。
@@ -645,11 +647,12 @@ class NoteGenerator:
         :param formats: 包含 'link' 或 'screenshot' 的列表
         :param audio_meta: AudioDownloadResult 元信息，用于链接替换
         :param platform: 平台标识，用于链接替换
+        :param task_id: 任务 ID，截图按任务分目录存放
         :return: 处理后的 Markdown 字符串
         """
         if "screenshot" in formats and video_path:
             try:
-                markdown = self._insert_screenshots(markdown, video_path)
+                markdown = self._insert_screenshots(markdown, video_path, task_id)
             except Exception as exc:
                 logger.warning("截图插入失败，跳过该步骤")
 
@@ -661,21 +664,27 @@ class NoteGenerator:
 
         return markdown
 
-    def _insert_screenshots(self, markdown: str, video_path: Path) -> str | None | Any:
+    def _insert_screenshots(self, markdown: str, video_path: Path, task_id: Optional[str] = None) -> str | None | Any:
         """
         扫描 Markdown 文本中所有 Screenshot 标记，并替换为实际生成的截图链接。
 
+        截图按任务分目录存放（static/screenshots/{task_id}/），便于随任务一起清理。
+        task_id 为空时退回平铺目录（兼容旧调用），旧笔记的平铺 URL 依然有效。
+
         :param markdown: 含有 *Screenshot-mm:ss 或 Screenshot-[mm:ss] 标记的 Markdown 文本
         :param video_path: 本地视频文件路径
+        :param task_id: 任务 ID，用于截图子目录
         :return: 替换后的 Markdown 字符串
         """
         matches: List[Tuple[str, int]] = extract_screenshot_timestamps(markdown)
         for idx, (marker, ts) in enumerate(matches):
             try:
-                img_path = generate_screenshot(str(video_path), str(IMAGE_OUTPUT_DIR), ts, idx)
+                output_dir = os.path.join(IMAGE_OUTPUT_DIR, task_id) if task_id else IMAGE_OUTPUT_DIR
+                img_path = generate_screenshot(str(video_path), output_dir, ts, idx)
                 filename = Path(img_path).name
-                # 构建前端可访问的 URL，例如 /static/screenshots/{filename}
-                img_url = f"{IMAGE_BASE_URL.rstrip('/')}/{filename}"
+                # 构建前端可访问的 URL，例如 /static/screenshots/{task_id}/{filename}
+                sub = f"/{task_id}" if task_id else ""
+                img_url = f"{IMAGE_BASE_URL.rstrip('/')}{sub}/{filename}"
                 markdown = markdown.replace(marker, f"![]({img_url})", 1)
             except Exception as exc:
                 logger.error(f"生成截图失败 (timestamp={ts})：{exc}")

@@ -42,19 +42,38 @@ export const generateNote = async (data: {
   }
 }
 
-export const delete_task = async ({ video_id, platform }) => {
+// 历史列表轻量项（不含 markdown/transcript 全文，全文按需调 get_task_status）
+export interface TaskListItem {
+  task_id: string
+  status: string
+  message?: string
+  created_at?: string
+  video_id?: string
+  platform?: string
+  title?: string
+  cover_url?: string
+  has_result?: boolean
+  form_data?: Record<string, any>
+}
+
+export const get_task_list = async (): Promise<TaskListItem[]> => {
   try {
-    const data = {
-      video_id,
-      platform,
-    }
-    const res = await request.post('/delete_task', data)
-
-
-      toast.success('任务已成功删除')
-      return res
+    const res = await request.get('/task_list')
+    return res?.tasks ?? []
   } catch (e) {
-    toast.error('请求异常，删除任务失败')
+    console.error('❌ 获取任务列表失败:', e)
+    return [] // 列表是增强功能，失败不阻塞页面
+  }
+}
+
+// 新调用传 task_id；video_id+platform 保留兼容旧调用
+export const delete_task = async ({ task_id, video_id, platform }) => {
+  try {
+    const res = await request.post('/delete_task', { task_id, video_id, platform })
+    toast.success('任务已成功删除')
+    return res
+  } catch (e) {
+    // 拦截器已弹错误 toast，这里只上抛，由 removeTask 决定是否保留本地条目
     console.error('❌ 删除任务失败:', e)
     throw e
   }

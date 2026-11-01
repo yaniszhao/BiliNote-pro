@@ -35,3 +35,14 @@ docker run --rm -v /mnt/d/CodeRepos/BiliNote-pro/backend:/srv -w /srv \
 
 如果单独跑这些用例（不与其他测试混跑），`_load_base()` 自己 setdefault 之前
 没有污染源，能通过——判断改动是否引入新失败时用排除法：跑不含新文件的套件对照。
+
+## 新测试用 sys.modules 桩会污染后续 API 级测试的收集（2026-11-01）
+
+`tests/test_task_meta.py` 最初版本按惯例给 `app.utils.logger` 打了 sys.modules 桩
+（`sys.modules.setdefault("app", ...)`），结果把真实 `app` 包顶成了非 package 的
+ModuleType，字母序在它后面的 API 级测试（`import app.routers.note`）在**收集阶段**就报
+`ModuleNotFoundError: No module named 'app.routers'; 'app' is not a package`——单独跑又能过，
+极具迷惑性（`test_ydl_retry_opts` 的污染是运行期污染，这个是收集期污染）。
+
+经验：**被 importlib 单文件加载的目标模块，尽量做到零 app 包依赖**（基础设施模块直接用
+标准库 `logging.getLogger`）。task_meta.py 已按此原则改造，测试里不再需要任何桩。
